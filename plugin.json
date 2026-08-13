@@ -8,7 +8,12 @@
   },
   "nativeDependencies": {
     "android": {
-      "gradle": "androidx.camera:camera-camera2:1.6.1",
+      "gradle": [
+        "androidx.camera:camera-camera2:1.6.1",
+        "androidx.camera:camera-lifecycle:1.6.1",
+        "androidx.camera:camera-view:1.6.1",
+        "com.google.mlkit:barcode-scanning:17.3.0"
+      ],
       "proguardRules": "-keep class com.google.mlkit.vision.barcode.** { *; }\n-keep class com.google.mlkit.vision.common.** { *; }"
     }
   },
