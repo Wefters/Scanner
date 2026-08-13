@@ -1,0 +1,18 @@
+{
+  "name": "scanner",
+  "permissions": {
+    "android": ["android.permission.CAMERA", "android.permission.VIBRATE"],
+    "ios": {
+      "NSCameraUsageDescription": "Used to scan barcodes and QR codes."
+    }
+  },
+  "nativeDependencies": {
+    "android": {
+      "gradle": "androidx.camera:camera-camera2:1.6.1",
+      "proguardRules": "-keep class com.google.mlkit.vision.barcode.** { *; }\n-keep class com.google.mlkit.vision.common.** { *; }"
+    }
+  },
+  "methods": ["scan", "stop"],
+  "hooks": [],
+  "events": ["scanner:codeScanned", "scanner:cancelled"]
+}
