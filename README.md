@@ -1,123 +1,120 @@
 # @wefterjs/scanner
 
-Official Wefter plugin for high-performance camera QR code & barcode scanning on Android & iOS.
-
----
+Official Wefter plugin for camera QR code and barcode scanning on Android and iOS.
 
 ## Features
 
-- 📷 **Real-Time Camera Frame Processing**: Uses Google MLKit Barcode Scanning (Android) & AVFoundation `AVCaptureMetadataOutput` (iOS).
-- 🏷️ **Multi-Format Support**: QR Code, EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, ITF, Aztec, PDF417, Data Matrix.
-- 🔦 **Torch & Camera Control**: Programmatically toggle torch and switch front/back cameras.
-- 📡 **Event Streams**: Real-time barcode scan callbacks (`scanner:codeScanned`).
+- Real-time camera feed scanning using Google MLKit Barcode Scanning on Android and AVFoundation on iOS.
+- Multi-format recognition: QR codes, EAN-13, EAN-8, Code 128, Code 39, UPC-A, and UPC-E.
+- Optional gallery picker button allowing users to decode saved photos.
+- Continuous scanning mode or single-shot match resolution.
+- Configurable prompt text, zoom controls, tap to focus, and haptic feedback on scan success.
+- Event listeners for matched codes and user cancellation.
 
----
+## Installation and setup
 
-## Installation & Setup
-
-1. Add the plugin to your Wefter project:
+Install the plugin package in your Wefter application:
 
 ```bash
 wefter add @wefterjs/scanner
-```
-
-2. Synchronize native projects:
-
-```bash
 wefter sync
 ```
 
----
+### Native permissions and dependencies
 
-## Native Permissions Configuration
+When synchronized:
 
-- **Android**: Automatically requests `<uses-permission android:name="android.permission.CAMERA" />` and `<uses-permission android:name="android.permission.VIBRATE" />`.
-- **iOS** (`Info.plist`): Automatically injects `NSCameraUsageDescription` ("Used to scan barcodes and QR codes.").
+- Android receives the `CAMERA` and `VIBRATE` permissions, along with AndroidX CameraX and Google MLKit barcode scanning dependencies and ProGuard keep rules.
+- iOS configures `NSCameraUsageDescription` in `Info.plist`.
 
----
+## JavaScript API reference
 
-## JavaScript API Reference
-
-Import `invokeNative` and `registerHook` from `@wefterjs/core`:
+Import `Scanner` from `@wefterjs/scanner`:
 
 ```ts
-import { invokeNative, registerHook } from "@wefterjs/core";
+import { Scanner } from "@wefterjs/scanner";
 ```
 
-### 1. `scan(options)`
+### Start scanning
 
-Launches the camera barcode scanner overlay.
+Launches the camera scanner overlay:
 
 ```ts
-interface ScanOptions {
-  formats?: string[]; // Allowed formats: ["QR_CODE", "EAN_13", "CODE_128"] (default: all)
-  torch?: boolean; // Enable torch automatically (default: false)
-  cameraDirection?: "back" | "front"; // Camera sensor (default: "back")
-}
+// 1. Listen for scanned codes
+const codeSub = Scanner.onCodeScanned(({ data, format }) => {
+  console.log("Scanned code content:", data);
+  console.log("Barcode format:", format);
 
-await invokeNative("scanner", "scan", {
-  formats: ["QR_CODE", "EAN_13"],
-  cameraDirection: "back",
+  // Stop scanning after the first match if continuous is false
+  Scanner.stop();
+});
+
+// 2. Listen for cancellation (back button or close button tapped)
+const cancelSub = Scanner.onCancelled(({ reason }) => {
+  console.log("Scanner closed:", reason);
+});
+
+// 3. Launch camera scanner
+await Scanner.scan({
+  prompt: "Align QR code inside the frame",
+  formats: ["qr", "ean13", "code128"],
+  continuous: false,  // Stop after first match when false
+  allowGallery: true, // Display button to pick photos from album
+  haptics: true,      // Play tactile feedback on match
+  focusOnTap: true,
+  zoomControl: true,
+  timeout: 30,        // Automatically cancel after 30 seconds of inactivity
 });
 ```
 
-### 2. `stop()`
+### Stop scanning
 
-Stops the active scanner and closes the camera preview overlay.
-
-```ts
-await invokeNative("scanner", "stop");
-```
-
----
-
-## Event Subscriptions
-
-Listen to scanned codes via `registerHook`:
+Closes the camera preview overlay programmatically:
 
 ```ts
-import { registerHook } from "@wefterjs/core";
-
-interface ScannedCodePayload {
-  rawValue: string;
-  format: string;
-}
-
-// Subscribe to scanned code events
-const scanSub = registerHook("scanner:codeScanned", (data: ScannedCodePayload) => {
-  console.log("Scanned Value:", data.rawValue);
-  console.log("Barcode Format:", data.format);
-});
-
-// Subscribe to scanner cancelled event
-const cancelSub = registerHook("scanner:cancelled", () => {
-  console.log("User dismissed scanner overlay");
-});
+await Scanner.stop();
 ```
 
----
-
-## Complete Usage Example
+### Clean up listeners
 
 ```ts
-import { invokeNative, registerHook } from "@wefterjs/core";
-
-export async function startQrScan(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const codeSub = registerHook("scanner:codeScanned", (data: { rawValue: string }) => {
-      codeSub.remove();
-      cancelSub.remove();
-      invokeNative("scanner", "stop");
-      resolve(data.rawValue);
-    });
-
-    const cancelSub = registerHook("scanner:cancelled", () => {
-      codeSub.remove();
-      cancelSub.remove();
-      reject(new Error("Scan cancelled"));
-    });
-
-    invokeNative("scanner", "scan", { formats: ["QR_CODE"] });
-  });
-}
+codeSub.remove();
+cancelSub.remove();
 ```
+
+## Barcode formats
+
+Supported values in the `formats` array:
+
+- `"qr"`: QR Code
+- `"ean13"`: EAN-13 European Article Number
+- `"ean8"`: EAN-8 European Article Number
+- `"code128"`: Code 128 barcode
+- `"code39"`: Code 39 barcode
+- `"upca"`: UPC-A Universal Product Code
+- `"upce"`: UPC-E Universal Product Code
+- `"all"`: Match all supported formats
+
+## Platform events
+
+| Event | Payload | Platforms |
+| --- | --- | --- |
+| `scanner:codeScanned` | `{ data: string, format: string, id?: string }` | Android, iOS |
+| `scanner:cancelled` | `{ reason: string, id?: string }` | Android, iOS |
+
+## Platform implementation notes
+
+### Android
+
+- Uses Google MLKit Barcode Scanning (`com.google.mlkit:barcode-scanning:17.3.0`) integrated with AndroidX CameraX (`PreviewView`, `ImageAnalysis`).
+- Runs image analysis on a background executor thread without blocking the user interface.
+- Includes a gallery picker intent (`ActivityResultContracts.GetContent`) to decode images using `InputImage.fromFilePath`.
+
+### iOS
+
+- Uses `AVFoundation` with `AVCaptureSession`, `AVCaptureVideoPreviewLayer`, and `AVCaptureMetadataOutput`.
+- Uses `UIImagePickerController` for optional photo gallery decoding using `CIDetector` or `VNImageRequestHandler`.
+
+## License
+
+[MIT](LICENSE) © 2026 Sandip Ghimire
