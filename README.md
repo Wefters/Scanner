@@ -113,6 +113,7 @@ Supported values in the `formats` array:
 ### iOS
 
 - Uses `AVFoundation` with `AVCaptureSession`, `AVCaptureVideoPreviewLayer`, and `AVCaptureMetadataOutput`.
+- If the camera can't be used (no camera, as in the Simulator, the camera is busy or restricted, or it fails while running), the scanner stays open and shows a "Camera unavailable" message so the user can still choose a code from the gallery. With `allowGallery: false` it closes instead, emitting `scanner:cancelled` with reason `camera_error`.
 - Uses `UIImagePickerController` for optional photo gallery decoding using `CIDetector` or `VNImageRequestHandler`.
 
 ## License

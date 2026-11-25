@@ -8,6 +8,8 @@ final class ScannerPlugin: WefterPlugin {
     private static let validFormats: Set<String> = ["qr", "ean13", "ean8", "code128", "code39", "upca", "upce"]
 
     private weak var activeController: ScannerViewController?
+    private var presentedScanner: ScannerViewController?
+    private var queuedScan: (id: String?, start: () -> Void)?
 
     // @WefterMethod
     func scan(payload: [String: Any], callback: @escaping (Result<Any, Error>) -> Void) throws {
@@ -89,30 +91,45 @@ final class ScannerPlugin: WefterPlugin {
     func stop(payload: [String: Any], callback: @escaping (Result<Any, Error>) -> Void) throws {
         let id = payload["id"] as? String
 
-        guard let controller = activeController, id == nil || controller.sessionId == id else {
-            resolve(callback, data: ["stopped": false])
-            return
-        }
-
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if let queued = self.queuedScan, id == nil || queued.id == id {
+                self.queuedScan = nil
+                self.dispatchCancelled(reason: "stopped_by_app", id: queued.id)
+                self.resolve(callback, data: ["stopped": true])
+                return
+            }
+            guard let controller = self.activeController, id == nil || controller.sessionId == id else {
+                self.resolve(callback, data: ["stopped": false])
+                return
+            }
             controller.finish(cancelled: true, reason: "stopped_by_app")
+            self.resolve(callback, data: ["stopped": true])
         }
-
-        resolve(callback, data: ["stopped": true])
     }
 
     private func present(prompt: String, continuous: Bool, allowGallery: Bool, formats: [String], haptics: Bool, zoom: Double, maxZoom: Double, zoomControl: Bool, focusOnTap: Bool, timeoutSeconds: Int, id: String?) {
+        if let previous = presentedScanner {
+            queuedScan = (id: id, start: { [weak self] in
+                self?.present(prompt: prompt, continuous: continuous, allowGallery: allowGallery, formats: formats, haptics: haptics, zoom: zoom, maxZoom: maxZoom, zoomControl: zoomControl, focusOnTap: focusOnTap, timeoutSeconds: timeoutSeconds, id: id)
+            })
+            if activeController === previous { activeController = nil }
+            previous.finish(cancelled: true, reason: nil)  // replaced: closes silently, as before
+            return
+        }
+
         let rootViewController = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap { $0.windows }
             .first(where: { $0.isKeyWindow })?.rootViewController
 
-        guard let presenter = rootViewController else {
+        guard var presenter = rootViewController else {
             dispatchCancelled(reason: "no_root_view_controller", id: id)
             return
         }
-
-        activeController?.finish(cancelled: true, reason: nil)
+        while let presented = presenter.presentedViewController, !presented.isBeingDismissed {
+            presenter = presented
+        }
 
         let types = ScannerPlugin.metadataObjectTypes(for: formats)
         let controller = ScannerViewController(
@@ -139,9 +156,24 @@ final class ScannerPlugin: WefterPlugin {
             }
             self.dispatchCancelled(reason: reason, id: id)
         }
+        controller.onDismissed = { [weak self, weak controller] in
+            guard let self = self, self.presentedScanner === controller else { return }
+            self.presentedScanner = nil
+            if let next = self.queuedScan {
+                self.queuedScan = nil
+                next.start()
+            }
+        }
         controller.modalPresentationStyle = .fullScreen
         activeController = controller
+        presentedScanner = controller
         presenter.present(controller, animated: true)
+
+        if controller.presentingViewController == nil {
+            activeController = nil
+            presentedScanner = nil
+            dispatchCancelled(reason: "presentation_failed", id: id)
+        }
     }
 
     private func dispatchCodeScanned(data: String, format: String, id: String?) {
@@ -430,8 +462,14 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
 
     var onCodeScanned: ((String, String) -> Void)?
     var onCancelled: ((String) -> Void)?
+    var onDismissed: (() -> Void)?
 
     private let session = AVCaptureSession()
+    private let sessionQueue = DispatchQueue(label: "dev.wefter.scanner.session")
+    private var sessionTornDown = false
+    private var pendingDismiss = false
+    private var dismissInFlight = false
+    private var hasAppeared = false
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var captureDevice: AVCaptureDevice?
     private var finished = false
@@ -444,6 +482,8 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
     private let focusIndicatorView = FocusIndicatorView()
     private let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
     private var timeoutWorkItem: DispatchWorkItem?
+    private var cameraAvailable = true
+    private let cameraUnavailableView = UIStackView()
 
     private let zoomSliderView = CameraZoomSliderView()
     private let zoomValueLabel = UILabel()
@@ -481,6 +521,8 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         view.backgroundColor = .black
         setUpCamera()
         setUpOverlay()
+        setUpCameraUnavailableView()
+        if !cameraAvailable { applyCameraUnavailableUI() }
 
         if hapticsEnabled {
             impactFeedback.prepare()
@@ -495,18 +537,66 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    deinit {
+        let session = self.session
+        sessionQueue.async {
+            if session.isRunning { session.stopRunning() }
+        }
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        guard !session.isRunning else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [session] in
-            session.startRunning()
+        guard !finished else { return }
+        startSession()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        hasAppeared = true
+        if pendingDismiss {
+            pendingDismiss = false
+            performDismiss()
         }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        guard session.isRunning else { return }
-        session.stopRunning()
+        if finished {
+            tearDownSession()
+        } else {
+            pauseSession()
+        }
+    }
+
+    private func startSession() {
+        guard cameraAvailable else { return }
+        sessionQueue.async { [session, weak self] in
+            guard let self = self, !self.sessionTornDown, !session.isRunning else { return }
+            session.startRunning()
+        }
+    }
+
+    private func pauseSession() {
+        sessionQueue.async { [session] in
+            if session.isRunning { session.stopRunning() }
+        }
+    }
+
+    private func tearDownSession() {
+        let device = captureDevice
+        sessionQueue.async { [session, weak self] in
+            self?.sessionTornDown = true
+            if let device = device, device.hasTorch, device.torchMode != .off,
+               (try? device.lockForConfiguration()) != nil {
+                device.torchMode = .off
+                device.unlockForConfiguration()
+            }
+            if session.isRunning { session.stopRunning() }
+            session.beginConfiguration()
+            session.inputs.forEach { session.removeInput($0) }
+            session.outputs.forEach { session.removeOutput($0) }
+            session.commitConfiguration()
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -517,6 +607,18 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         viewfinderOverlay.layoutIfNeeded()
 
         let square = viewfinderOverlay.scanWindowFrame
+        if !cameraUnavailableView.isHidden {
+            let width = max(square.width - 40, 0)
+            let height = min(
+                cameraUnavailableView.systemLayoutSizeFitting(
+                    CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                ).height,
+                square.height - 40
+            )
+            cameraUnavailableView.frame = CGRect(x: square.midX - width / 2, y: square.midY - height / 2, width: width, height: height)
+        }
 
         if allowGallery {
             var size = galleryButton.bounds.size
@@ -560,11 +662,72 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    private func handleCameraUnavailable() {
+        guard !finished, cameraAvailable else { return }
+        cameraAvailable = false
+        guard allowGallery else {
+            finish(cancelled: true, reason: "camera_error")
+            return
+        }
+        tearDownSession()
+        if isViewLoaded { applyCameraUnavailableUI() }
+    }
+
+    private func setUpCameraUnavailableView() {
+        let icon = UIImageView(image: UIImage(systemName: "video.slash.fill"))
+        icon.tintColor = UIColor.white.withAlphaComponent(0.85)
+        icon.contentMode = .scaleAspectFit
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 34, weight: .regular)
+
+        let title = UILabel()
+        title.text = "Camera unavailable"
+        title.textColor = .white
+        title.font = .systemFont(ofSize: 17, weight: .semibold)
+        title.textAlignment = .center
+
+        let message = UILabel()
+        message.text = "You can still scan a code from a photo in your gallery."
+        message.textColor = UIColor.white.withAlphaComponent(0.7)
+        message.font = .systemFont(ofSize: 14)
+        message.textAlignment = .center
+        message.numberOfLines = 0
+
+        [icon, title, message].forEach { cameraUnavailableView.addArrangedSubview($0) }
+        cameraUnavailableView.axis = .vertical
+        cameraUnavailableView.alignment = .center
+        cameraUnavailableView.distribution = .fill
+        cameraUnavailableView.spacing = 10
+        cameraUnavailableView.setCustomSpacing(6, after: title)
+        cameraUnavailableView.isUserInteractionEnabled = false
+        cameraUnavailableView.isHidden = true
+        cameraUnavailableView.accessibilityElements = [title, message]
+        view.addSubview(cameraUnavailableView)
+    }
+
+    private func applyCameraUnavailableUI() {
+        previewLayer?.isHidden = true
+        torchButton.isHidden = true
+        zoomSliderView.isHidden = true
+        zoomValueLabel.isHidden = true
+        promptLabel?.isHidden = true
+        view.gestureRecognizers?.forEach { $0.isEnabled = false }
+        cameraUnavailableView.isHidden = false
+        view.bringSubviewToFront(cameraUnavailableView)
+        view.setNeedsLayout()
+        UIAccessibility.post(notification: .layoutChanged, argument: cameraUnavailableView)
+    }
+
+    @objc private func sessionRuntimeError(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.handleCameraUnavailable()
+        }
+    }
+
     private func setUpCamera() {
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input) else {
-            finish(cancelled: true, reason: "camera_error")
+            handleCameraUnavailable()
             return
         }
         session.addInput(input)
@@ -588,7 +751,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
 
         let output = AVCaptureMetadataOutput()
         guard session.canAddOutput(output) else {
-            finish(cancelled: true, reason: "camera_error")
+            handleCameraUnavailable()
             return
         }
         session.addOutput(output)
@@ -600,6 +763,11 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         layer.frame = view.bounds
         view.layer.insertSublayer(layer, at: 0)
         previewLayer = layer
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sessionRuntimeError(_:)),
+            name: AVCaptureSession.runtimeErrorNotification, object: session
+        )
     }
 
     private func setUpOverlay() {
@@ -719,7 +887,13 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
     }
 
     @objc private func closeTapped() {
-        finish(cancelled: true, reason: "user_cancelled")
+        guard finished else {
+            finish(cancelled: true, reason: "user_cancelled")
+            return
+        }
+        if !dismissInFlight, !isBeingDismissed {
+            performDismiss()
+        }
     }
 
     @objc private func galleryTapped() {
@@ -930,12 +1104,13 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         finished = true
 
         timeoutWorkItem?.cancel()
+        tearDownSession()
 
-        if session.isRunning {
-            session.stopRunning()
+        if hasAppeared {
+            performDismiss()
+        } else {
+            pendingDismiss = true
         }
-
-        dismiss(animated: true)
 
         if cancelled {
             guard let reason = reason else { return }
@@ -943,6 +1118,26 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         } else if let data = data {
             onCodeScanned?(data, format ?? "unknown")
         }
+    }
+}
+
+extension ScannerViewController {
+    fileprivate func performDismiss() {
+        guard let presenter = presentingViewController else {
+            dismissFinished()
+            return
+        }
+        dismissInFlight = true
+        presenter.dismiss(animated: true) { [weak self] in
+            self?.dismissInFlight = false
+            self?.dismissFinished()
+        }
+    }
+
+    private func dismissFinished() {
+        let callback = onDismissed
+        onDismissed = nil
+        callback?()
     }
 }
 
