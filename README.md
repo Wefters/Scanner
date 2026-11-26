@@ -114,7 +114,7 @@ Supported values in the `formats` array:
 
 - Uses `AVFoundation` with `AVCaptureSession`, `AVCaptureVideoPreviewLayer`, and `AVCaptureMetadataOutput`.
 - If the camera can't be used (no camera, as in the Simulator, the camera is busy or restricted, or it fails while running), the scanner stays open and shows a "Camera unavailable" message so the user can still choose a code from the gallery. With `allowGallery: false` it closes instead, emitting `scanner:cancelled` with reason `camera_error`.
-- Uses `UIImagePickerController` for optional photo gallery decoding using `CIDetector` or `VNImageRequestHandler`.
+- Uses `PHPickerViewController` for optional photo gallery decoding with Vision (`VNDetectBarcodesRequest`). When Vision finds no code, QR codes are read with Core Image's `CIDetector`. Vision's barcode model can't run in the iOS Simulator, so there only QR codes are read from photos.
 
 ## License
 

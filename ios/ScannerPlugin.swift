@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import PhotosUI
 import UIKit
 import Vision
@@ -1108,36 +1109,49 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
-    /// Looks for a code of the requested formats in an image with Vision.
+    /// Looks for a code of the requested formats in an image with Vision, and for a QR code with Core Image
+    /// when Vision finds none. Vision's barcode model can't run in the Simulator, so there only QR codes are read.
     private func decodeGalleryImage(_ cgImage: CGImage) {
+        let symbologies = ScannerPlugin.barcodeSymbologies(for: requestedFormats)
         let request = VNDetectBarcodesRequest()
-        request.symbologies = ScannerPlugin.barcodeSymbologies(for: requestedFormats)
+        request.symbologies = symbologies
 
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-
+        var visionFailed = false
+        var match: (value: String, symbology: VNBarcodeSymbology)?
         do {
-            try handler.perform([request])
+            try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+            if let observation = request.results?.first(where: { $0.payloadStringValue != nil }),
+               let value = observation.payloadStringValue {
+                match = (value, observation.symbology)
+            }
         } catch {
+            visionFailed = true
+        }
+
+        if match == nil, symbologies.contains(.qr), let value = ScannerViewController.decodeQRCode(in: cgImage) {
+            match = (value, .qr)
+        }
+
+        guard let (value, symbology) = match else {
             DispatchQueue.main.async { [weak self] in
-                self?.showGalleryAlert(message: "Couldn't read that image.")
+                self?.showGalleryAlert(message: visionFailed ? "Couldn't read that image." : "No code found in that image.")
             }
             return
         }
 
-        guard let match = request.results?.first(where: { $0.payloadStringValue != nil }),
-              let value = match.payloadStringValue else {
-            DispatchQueue.main.async { [weak self] in
-                self?.showGalleryAlert(message: "No code found in that image.")
-            }
-            return
-        }
-
-        let format = ScannerViewController.formatName(forSymbology: match.symbology, value: value, requested: requestedFormats)
+        let format = ScannerViewController.formatName(forSymbology: symbology, value: value, requested: requestedFormats)
 
         DispatchQueue.main.async { [weak self] in
             self?.triggerHapticFeedback()
             self?.finish(cancelled: false, data: value, format: format)
         }
+    }
+
+    /// The text of the first QR code Core Image finds in the image.
+    private static func decodeQRCode(in cgImage: CGImage) -> String? {
+        let detector = CIDetector(ofType: CIDetectorTypeQRCode, context: nil, options: [CIDetectorAccuracy: CIDetectorAccuracyHigh])
+        let features = detector?.features(in: CIImage(cgImage: cgImage)) ?? []
+        return features.lazy.compactMap { ($0 as? CIQRCodeFeature)?.messageString }.first
     }
 
     /// Tells the user that no code was found in the photo.
