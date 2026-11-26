@@ -56,9 +56,14 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 
+/** The string at [key], or `null` when it is missing or `null`. */
 private fun JSONObject.optNullableString(key: String): String? =
         if (has(key) && !isNull(key)) getString(key) else null
 
+/**
+ * Barcode and QR scanning with CameraX and ML Kit in a full-screen overlay, plus decoding codes from photos.
+ * Only one scanner is open at a time.
+ */
 class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlugin(context, dispatcher) {
 
     private val activity: FragmentActivity
@@ -66,6 +71,10 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
 
     @Volatile private var activeOverlay: ScannerOverlay? = null
 
+    /**
+     * Validates the options, asks for camera permission if needed and opens the scanner. Rejects with
+     * `INVALID_FORMAT` for unknown formats and `PERMISSION_DENIED` when camera access is refused.
+     */
     @WefterMethod
     fun scan(payload: JSONObject, callback: (Result<Any>) -> Unit) {
         val prompt = payload.optString("prompt", "")
@@ -155,6 +164,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         }
     }
 
+    /** Closes the scanner with the given `id`, or whichever is open without one. */
     @WefterMethod
     fun stop(payload: JSONObject, callback: (Result<Any>) -> Unit) {
         val id = payload.optNullableString("id")
@@ -169,6 +179,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         resolve(callback, JSONObject().put("stopped", true))
     }
 
+    /** Opens the scanner overlay, replacing one that is already open. */
     private fun startScan(
             prompt: String,
             continuous: Boolean,
@@ -203,18 +214,21 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         }
     }
 
+    /** Emits `scanner:codeScanned`. */
     private fun dispatchCodeScanned(data: String, format: String, id: String?) {
         val payload = JSONObject().put("data", data).put("format", format)
         if (id != null) payload.put("id", id)
         emit("scanner:codeScanned", payload)
     }
 
+    /** Emits `scanner:cancelled`. */
     private fun dispatchCancelled(reason: String, id: String?) {
         val payload = JSONObject().put("reason", reason)
         if (id != null) payload.put("id", id)
         emit("scanner:cancelled", payload)
     }
 
+    /** ML Kit format for each format name that can be requested. */
     private val FORMAT_MAP: Map<String, Int> =
             mapOf(
                     "qr" to Barcode.FORMAT_QR_CODE,
@@ -226,6 +240,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
                     "upce" to Barcode.FORMAT_UPC_E,
             )
 
+    /** Name reported for each format ML Kit can detect. */
     private val REVERSE_FORMAT_MAP: Map<Int, String> =
             mapOf(
                     Barcode.FORMAT_QR_CODE to "qr",
@@ -243,6 +258,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
                     Barcode.FORMAT_AZTEC to "aztec",
             )
 
+    /** ML Kit scanner options for the requested format names. */
     private fun barcodeFormatOptions(names: List<String>): BarcodeScannerOptions {
         if (names.contains("all")) {
             return BarcodeScannerOptions.Builder()
@@ -257,6 +273,9 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         return BarcodeScannerOptions.Builder().setBarcodeFormats(first, *rest).build()
     }
 
+    /**
+     * Remembers whether camera permission was asked before, to tell "denied once" from "denied permanently".
+     */
     private object PermissionPrefs {
         private const val PREFS_NAME = "wefter_scanner_permission_prefs"
         private const val KEY_ASKED = "camera_permission_asked"
@@ -273,6 +292,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         }
     }
 
+    /** A headless fragment that launches the system photo picker and returns the picked image. */
     class GalleryPickerHost : Fragment() {
         private var callback: ((Uri?) -> Unit)? = null
 
@@ -283,6 +303,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
                     cb?.invoke(uri)
                 }
 
+        /** Opens the picker and calls [onPicked] with the image, or `null` when cancelled. */
         fun pickImage(onPicked: (Uri?) -> Unit) {
             callback = onPicked
             launcher.launch(
@@ -293,6 +314,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         companion object {
             private const val TAG = "ScannerGalleryPicker"
 
+            /** Attaches the picker fragment to [activity], reusing an existing one. */
             fun install(activity: FragmentActivity): GalleryPickerHost =
                     activity.supportFragmentManager.findFragmentByTag(TAG) as? GalleryPickerHost
                             ?: GalleryPickerHost().also {
@@ -304,6 +326,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         }
     }
 
+    /** A round overlay button that draws its icon on a canvas. */
     private class IconButtonView(
             context: Context,
             initialGlyph: (Canvas, Float, Float, Float) -> Unit,
@@ -334,6 +357,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         }
     }
 
+    /** Draws an X centred at ([cx], [cy]). */
     private fun drawCloseIcon(canvas: Canvas, cx: Float, cy: Float, r: Float) {
         val paint =
                 Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -347,6 +371,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         canvas.drawLine(cx - d, cy + d, cx + d, cy - d, paint)
     }
 
+    /** Draws a lightning bolt (torch on). */
     private fun drawBoltIcon(canvas: Canvas, cx: Float, cy: Float, r: Float) {
         val paint =
                 Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -370,6 +395,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         canvas.drawPath(path, paint)
     }
 
+    /** Draws a crossed-out lightning bolt (torch off). */
     private fun drawBoltSlashIcon(canvas: Canvas, cx: Float, cy: Float, r: Float) {
         val paint =
                 Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -408,6 +434,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         canvas.drawPath(tip, paint)
     }
 
+    /** Dims the camera preview outside the scan area and draws its corner brackets. */
     private class ViewfinderOverlayView(
             context: Context,
             private val windowRect: RectF,
@@ -430,6 +457,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         private var pulseTarget: RectF? = null
         private var pulseAnimator: ValueAnimator? = null
 
+        /** Flashes the brackets green, moving them onto the found code when its position is known. */
         fun playSuccessPulse(codeRect: RectF?) {
             pulseTarget = codeRect
             pulseAnimator?.cancel()
@@ -483,6 +511,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         }
     }
 
+    /** A horizontal slider for the camera zoom, drawn by hand. */
     private class ZoomSliderView(context: Context) : View(context) {
         var minValue = 1f
         var maxValue = 3f
@@ -557,6 +586,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
             return true
         }
 
+        /** Sets the value from a touch position and reports it. */
         private fun updateFromTouch(x: Float) {
             val left = trackLeft()
             val right = trackRight()
@@ -568,6 +598,12 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         }
     }
 
+    /**
+     * The scanner screen: camera preview, viewfinder, prompt, close, torch and gallery buttons, an optional
+     * zoom
+     * slider and tap to focus. In continuous mode repeated reads of the same code are ignored for
+     * [REPEAT_DEBOUNCE_MS].
+     */
     private inner class ScannerOverlay(
             private val prompt: String,
             private val continuous: Boolean,
@@ -607,6 +643,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         private fun dp(value: Int): Int =
                 (value * activity.resources.displayMetrics.density).toInt()
 
+        /** Adds the overlay to the activity, binds the camera and starts analysing frames. */
         fun show() {
             val previewView =
                     PreviewView(activity).apply {
@@ -915,6 +952,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
             )
         }
 
+        /** Runs ML Kit on a camera frame and handles the first code found inside the viewfinder. */
         private fun processFrame(imageProxy: ImageProxy, scanner: BarcodeScanner) {
             val mediaImage = imageProxy.image
             if (mediaImage == null) {
@@ -951,6 +989,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
                     .addOnCompleteListener { imageProxy.close() }
         }
 
+        /** Converts a code's bounding box from image coordinates to view coordinates. */
         private fun mapBoundingBoxToView(
                 box: Rect?,
                 imageWidth: Int,
@@ -980,8 +1019,10 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
             )
         }
 
+        /** `2.0x` and the like. */
         private fun formatZoomLabel(ratio: Float): String = String.format("%.1fx", ratio)
 
+        /** Applies the starting zoom, within the camera's limits and `maxZoom`. */
         private fun applyZoom(boundCamera: Camera) {
             val zoomState = boundCamera.cameraInfo.zoomState.value
             val deviceMin = zoomState?.minZoomRatio ?: 1f
@@ -998,6 +1039,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
             zoomLabel?.text = formatZoomLabel(clampedInitial)
         }
 
+        /** Shows the focus square where the user tapped. */
         private fun showFocusIndicator(x: Float, y: Float) {
             val overlay = overlayView ?: return
             val size = dp(64)
@@ -1035,6 +1077,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
                     .start()
         }
 
+        /** Vibrates briefly when haptics are enabled. */
         private fun vibrate() {
             if (!haptics) return
             try {
@@ -1063,6 +1106,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
             }
         }
 
+        /** Opens the photo picker to scan a code from an image. */
         private fun pickFromGallery() {
             if (!allowGallery) return
             GalleryPickerHost.install(activity).pickImage { uri ->
@@ -1071,6 +1115,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
             }
         }
 
+        /** Looks for a code of the requested formats in the picked image. */
         private fun decodeGalleryImage(uri: Uri) {
             if (finished.get()) return
             val scanner = this.scanner ?: return
@@ -1106,10 +1151,16 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
                     }
         }
 
+        /** Tells the user that no code was found in the photo. */
         private fun showGalleryToast(message: String) {
             activity.runOnUiThread { Toast.makeText(activity, message, Toast.LENGTH_SHORT).show() }
         }
 
+        /**
+         * Handles a found code: finishes after the success animation, or in continuous mode reports it
+         * unless the
+         * same code was just reported.
+         */
         private fun handleMatch(value: String, format: String, boundingBox: RectF?) {
             if (!continuous) {
                 if (!matched.compareAndSet(false, true)) return
@@ -1139,6 +1190,11 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
             }
         }
 
+        /**
+         * Ends the scan once: releases the camera, removes the overlay and reports the code or the
+         * cancellation
+         * reason.
+         */
         fun finish(
                 cancelled: Boolean,
                 data: String? = null,
@@ -1172,7 +1228,9 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
 
     companion object {
         private const val TAG = "ScannerPlugin"
+        /** How long the same code is ignored in continuous mode. */
         private const val REPEAT_DEBOUNCE_MS = 2000L
+        /** How long the success animation plays before a single scan finishes. */
         private const val SUCCESS_PULSE_MS = 1000L
         private const val ACCENT_GREEN = 0xFF34D399.toInt()
     }

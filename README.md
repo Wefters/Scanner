@@ -58,12 +58,12 @@ const cancelSub = Scanner.onCancelled(({ reason }) => {
 await Scanner.scan({
   prompt: "Align QR code inside the frame",
   formats: ["qr", "ean13", "code128"],
-  continuous: false,  // Stop after first match when false
+  continuous: false, // Stop after first match when false
   allowGallery: true, // Display button to pick photos from album
-  haptics: true,      // Play tactile feedback on match
+  haptics: true, // Play tactile feedback on match
   focusOnTap: true,
   zoomControl: true,
-  timeout: 30,        // Automatically cancel after 30 seconds of inactivity
+  timeout: 30, // Automatically cancel after 30 seconds of inactivity
 });
 ```
 
@@ -97,10 +97,10 @@ Supported values in the `formats` array:
 
 ## Platform events
 
-| Event | Payload | Platforms |
-| --- | --- | --- |
+| Event                 | Payload                                         | Platforms    |
+| --------------------- | ----------------------------------------------- | ------------ |
 | `scanner:codeScanned` | `{ data: string, format: string, id?: string }` | Android, iOS |
-| `scanner:cancelled` | `{ reason: string, id?: string }` | Android, iOS |
+| `scanner:cancelled`   | `{ reason: string, id?: string }`               | Android, iOS |
 
 ## Platform implementation notes
 

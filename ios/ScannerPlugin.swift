@@ -3,6 +3,8 @@ import PhotosUI
 import UIKit
 import Vision
 
+/// Barcode and QR scanning with AVFoundation in a full-screen `ScannerViewController`, plus decoding codes
+/// from photos with Vision. Only one scanner is open at a time.
 final class ScannerPlugin: WefterPlugin {
 
     private static let validFormats: Set<String> = ["qr", "ean13", "ean8", "code128", "code39", "upca", "upce"]
@@ -11,6 +13,8 @@ final class ScannerPlugin: WefterPlugin {
     private var presentedScanner: ScannerViewController?
     private var queuedScan: (id: String?, start: () -> Void)?
 
+    /// Validates the options, asks for camera permission if needed and opens the scanner. Rejects with
+    /// `INVALID_FORMAT` for unknown formats and `PERMISSION_DENIED` when camera access is refused.
     // @WefterMethod
     func scan(payload: [String: Any], callback: @escaping (Result<Any, Error>) -> Void) throws {
         let prompt = payload["prompt"] as? String ?? ""
@@ -87,6 +91,7 @@ final class ScannerPlugin: WefterPlugin {
         }
     }
 
+    /// Closes the scanner with the given `id`, or whichever is open without one.
     // @WefterMethod
     func stop(payload: [String: Any], callback: @escaping (Result<Any, Error>) -> Void) throws {
         let id = payload["id"] as? String
@@ -108,13 +113,14 @@ final class ScannerPlugin: WefterPlugin {
         }
     }
 
+    /// Presents the scanner full screen and wires its results to events.
     private func present(prompt: String, continuous: Bool, allowGallery: Bool, formats: [String], haptics: Bool, zoom: Double, maxZoom: Double, zoomControl: Bool, focusOnTap: Bool, timeoutSeconds: Int, id: String?) {
         if let previous = presentedScanner {
             queuedScan = (id: id, start: { [weak self] in
                 self?.present(prompt: prompt, continuous: continuous, allowGallery: allowGallery, formats: formats, haptics: haptics, zoom: zoom, maxZoom: maxZoom, zoomControl: zoomControl, focusOnTap: focusOnTap, timeoutSeconds: timeoutSeconds, id: id)
             })
             if activeController === previous { activeController = nil }
-            previous.finish(cancelled: true, reason: nil)  // replaced: closes silently, as before
+            previous.finish(cancelled: true, reason: nil)
             return
         }
 
@@ -176,18 +182,21 @@ final class ScannerPlugin: WefterPlugin {
         }
     }
 
+    /// Emits `scanner:codeScanned`.
     private func dispatchCodeScanned(data: String, format: String, id: String?) {
         var payload: [String: Any] = ["data": data, "format": format]
         if let id = id { payload["id"] = id }
         emit("scanner:codeScanned", payload)
     }
 
+    /// Emits `scanner:cancelled`.
     private func dispatchCancelled(reason: String, id: String?) {
         var payload: [String: Any] = ["reason": reason]
         if let id = id { payload["id"] = id }
         emit("scanner:cancelled", payload)
     }
 
+    /// AVFoundation metadata types for the requested format names.
     private static func metadataObjectTypes(for names: [String]) -> [AVMetadataObject.ObjectType] {
         if names.contains("all") {
             return [.qr, .ean13, .ean8, .code128, .code39, .upce, .code93, .pdf417, .aztec, .dataMatrix, .interleaved2of5, .itf14, .codabar]
@@ -209,6 +218,7 @@ final class ScannerPlugin: WefterPlugin {
         return Array(types)
     }
 
+    /// Vision symbologies for the requested format names, used to decode photos.
     static func barcodeSymbologies(for names: [String]) -> [VNBarcodeSymbology] {
         if names.contains("all") {
             return [.qr, .ean13, .ean8, .code128, .code39, .upce, .code93, .pdf417, .aztec, .dataMatrix, .itf14, .codabar]
@@ -231,6 +241,7 @@ final class ScannerPlugin: WefterPlugin {
     }
 }
 
+/// Dims the camera preview outside the scan area and draws its corner brackets.
 final class ViewfinderOverlayView: UIView {
 
     private static let successColor = UIColor(red: 0.20, green: 0.83, blue: 0.60, alpha: 1)
@@ -276,6 +287,7 @@ final class ViewfinderOverlayView: UIView {
         borderLayer.path = UIBezierPath(roundedRect: rect, cornerRadius: ViewfinderOverlayView.cornerRadius).cgPath
     }
 
+    /// Flashes the brackets green, moving them onto the found code when its position is known.
     func playSuccessPulse(duration: TimeInterval, targetRect: CGRect?) {
         let target = targetRect ?? scanWindowFrame
         guard target.width > 0, target.height > 0 else { return }
@@ -316,6 +328,7 @@ final class ViewfinderOverlayView: UIView {
     }
 }
 
+/// The square shown where the user tapped to focus.
 final class FocusIndicatorView: UIView {
 
     override init(frame: CGRect) {
@@ -328,6 +341,7 @@ final class FocusIndicatorView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Shows the indicator at `point` and fades it out.
     func animateFocus(at point: CGPoint) {
         let size: CGFloat = 72
         let ring = UIView(frame: CGRect(x: point.x - size / 2, y: point.y - size / 2, width: size, height: size))
@@ -351,6 +365,7 @@ final class FocusIndicatorView: UIView {
     }
 }
 
+/// A horizontal slider for the camera zoom, drawn by hand.
 final class CameraZoomSliderView: UIView {
 
     var minValue: CGFloat = 1.0
@@ -434,6 +449,7 @@ final class CameraZoomSliderView: UIView {
         updateValue(fromTouchX: touch.location(in: self).x)
     }
 
+    /// Sets the value from a touch position and reports it.
     private func updateValue(fromTouchX x: CGFloat) {
         let left = trackLeft
         let right = trackRight
@@ -445,6 +461,8 @@ final class CameraZoomSliderView: UIView {
     }
 }
 
+/// The scanner screen: camera preview, viewfinder, prompt, close, torch and gallery buttons, an optional zoom
+/// slider and tap to focus. In continuous mode repeated reads of the same code are ignored for a moment.
 final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
 
     private let prompt: String
@@ -496,6 +514,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
     private let repeatDebounceSeconds: TimeInterval = 2.0
     private static let successPulseDuration: TimeInterval = 1.0
 
+    /// Creates the scanner with its options. `timeoutSeconds` of 0 never times out.
     init(prompt: String, continuous: Bool, allowGallery: Bool, formats: [String], types: [AVMetadataObject.ObjectType], haptics: Bool, zoom: Double, maxZoom: Double, zoomControl: Bool, focusOnTap: Bool, timeoutSeconds: Int, id: String?) {
         self.prompt = prompt
         self.continuous = continuous
@@ -516,6 +535,8 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Sets up the camera, the overlay and the timeout, switching to the "camera unavailable" view on devices
+    /// without a usable camera.
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
@@ -544,12 +565,14 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Starts the capture session.
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         guard !finished else { return }
         startSession()
     }
 
+    /// Carries out a dismissal that was requested before the screen finished appearing.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         hasAppeared = true
@@ -559,6 +582,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Pauses the capture session.
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         if finished {
@@ -568,6 +592,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Starts capturing on a background queue.
     private func startSession() {
         guard cameraAvailable else { return }
         sessionQueue.async { [session, weak self] in
@@ -576,12 +601,14 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Stops capturing without releasing the camera.
     private func pauseSession() {
         sessionQueue.async { [session] in
             if session.isRunning { session.stopRunning() }
         }
     }
 
+    /// Stops capturing and releases the camera.
     private func tearDownSession() {
         let device = captureDevice
         sessionQueue.async { [session, weak self] in
@@ -599,6 +626,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Lays out the preview and limits detection to the area inside the viewfinder.
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         previewLayer?.frame = view.bounds
@@ -662,6 +690,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Switches to the "camera unavailable" view.
     private func handleCameraUnavailable() {
         guard !finished, cameraAvailable else { return }
         cameraAvailable = false
@@ -673,6 +702,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         if isViewLoaded { applyCameraUnavailableUI() }
     }
 
+    /// Builds the view shown when the camera cannot be used.
     private func setUpCameraUnavailableView() {
         let icon = UIImageView(image: UIImage(systemName: "video.slash.fill"))
         icon.tintColor = UIColor.white.withAlphaComponent(0.85)
@@ -704,6 +734,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         view.addSubview(cameraUnavailableView)
     }
 
+    /// Hides the camera controls and shows the unavailable view.
     private func applyCameraUnavailableUI() {
         previewLayer?.isHidden = true
         torchButton.isHidden = true
@@ -717,12 +748,14 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         UIAccessibility.post(notification: .layoutChanged, argument: cameraUnavailableView)
     }
 
+    /// The capture session failed (for example the camera was taken by another app).
     @objc private func sessionRuntimeError(_ notification: Notification) {
         DispatchQueue.main.async { [weak self] in
             self?.handleCameraUnavailable()
         }
     }
 
+    /// Configures the camera input, the metadata output for the requested formats and the starting zoom.
     private func setUpCamera() {
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device),
@@ -770,6 +803,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         )
     }
 
+    /// Builds the viewfinder, prompt, buttons, zoom slider and focus gesture.
     private func setUpOverlay() {
         viewfinderOverlay.frame = view.bounds
         viewfinderOverlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -874,6 +908,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         ])
     }
 
+    /// Applies the round overlay button style.
     private func styleIconButton(_ button: UIButton) {
         button.backgroundColor = .white
         button.tintColor = .black
@@ -886,6 +921,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         )
     }
 
+    /// Closes the scanner as cancelled by the user.
     @objc private func closeTapped() {
         guard finished else {
             finish(cancelled: true, reason: "user_cancelled")
@@ -896,6 +932,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Opens the photo picker to scan a code from an image.
     @objc private func galleryTapped() {
         guard allowGallery else { return }
 
@@ -908,6 +945,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         present(picker, animated: true)
     }
 
+    /// Focuses and meters at the tapped point.
     @objc private func handleFocusTap(_ gesture: UITapGestureRecognizer) {
         guard let device = captureDevice, let layer = previewLayer else { return }
 
@@ -930,6 +968,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Applies a zoom factor from the slider, within the device's limits and `maxZoom`.
     private func applyZoomFromSlider(_ value: CGFloat) {
         guard let device = captureDevice else { return }
 
@@ -943,6 +982,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Turns the torch on or off.
     @objc private func torchTapped() {
         guard let device = captureDevice, device.hasTorch else { return }
 
@@ -957,6 +997,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Handles detected codes: finishes with the first one, or in continuous mode reports each new one.
     func metadataOutput(
         _ output: AVCaptureMetadataOutput,
         didOutput metadataObjects: [AVMetadataObject],
@@ -996,11 +1037,15 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         onCodeScanned?(value, format)
     }
 
+    /// Vibrates briefly when haptics are enabled.
     private func triggerHapticFeedback() {
         guard hapticsEnabled else { return }
         impactFeedback.impactOccurred()
     }
 
+    /// JavaScript name of a detected format. EAN-13 codes that are really UPC-A are reported as `upca` when
+    /// that
+    /// was requested.
     private static func formatName(for type: AVMetadataObject.ObjectType, value: String, requested: [String]) -> String {
         if type == .ean13, value.count == 13, value.hasPrefix("0"),
            requested.contains("upca") || requested.contains("all"), !requested.contains("ean13") {
@@ -1025,6 +1070,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// JavaScript name of a format decoded from a photo, with the same UPC-A handling.
     private static func formatName(forSymbology symbology: VNBarcodeSymbology, value: String, requested: [String]) -> String {
         if symbology == .ean13, value.count == 13, value.hasPrefix("0"),
            requested.contains("upca") || requested.contains("all"), !requested.contains("ean13") {
@@ -1048,6 +1094,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Loads the picked photo and decodes it.
     fileprivate func loadAndDecode(provider: NSItemProvider) {
         provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
             guard let self = self else { return }
@@ -1061,6 +1108,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Looks for a code of the requested formats in an image with Vision.
     private func decodeGalleryImage(_ cgImage: CGImage) {
         let request = VNDetectBarcodesRequest()
         request.symbologies = ScannerPlugin.barcodeSymbologies(for: requestedFormats)
@@ -1092,6 +1140,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
     }
 
+    /// Tells the user that no code was found in the photo.
     private func showGalleryAlert(message: String) {
         guard !finished else { return }
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
@@ -1099,6 +1148,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         present(alert, animated: true)
     }
 
+    /// Ends the scan once: reports the code, or the cancellation reason, and dismisses the scanner.
     func finish(cancelled: Bool, data: String? = nil, format: String? = nil, reason: String? = nil) {
         guard !finished else { return }
         finished = true
@@ -1122,6 +1172,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
 }
 
 extension ScannerViewController {
+    /// Dismisses the scanner and releases the camera.
     fileprivate func performDismiss() {
         guard let presenter = presentingViewController else {
             dismissFinished()
@@ -1134,6 +1185,7 @@ extension ScannerViewController {
         }
     }
 
+    /// Cleans up after the dismissal animation.
     private func dismissFinished() {
         let callback = onDismissed
         onDismissed = nil
@@ -1142,12 +1194,14 @@ extension ScannerViewController {
 }
 
 extension ScannerViewController: UIGestureRecognizerDelegate {
+    /// Ignores focus taps on the overlay's buttons and slider.
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         !(touch.view is UIControl)
     }
 }
 
 extension ScannerViewController: PHPickerViewControllerDelegate {
+    /// Handles the photo picked from the gallery.
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else {
             picker.dismiss(animated: true)
