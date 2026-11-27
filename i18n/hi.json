@@ -1,0 +1,8 @@
+{
+  "scanner.cameraUnavailable.message": "आप अब भी अपनी गैलरी की किसी फ़ोटो से कोड स्कैन कर सकते हैं।",
+  "scanner.cameraUnavailable.title": "कैमरा उपलब्ध नहीं है",
+  "scanner.gallery": "गैलरी से चुनें",
+  "scanner.imageUnreadable": "वह इमेज पढ़ी नहीं जा सकी।",
+  "scanner.noCodeInImage": "उस इमेज में कोई कोड नहीं मिला।",
+  "scanner.title": "कोड स्कैन करें"
+}

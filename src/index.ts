@@ -64,6 +64,14 @@ export interface ScannerCancelledEvent {
   id?: string;
 }
 
+/**
+ * Where camera access stands: `granted`, `prompt` (asking shows the system prompt) or `denied` (only the
+ * system settings can change it; see `openAppSettings()` in `@wefterjs/core`).
+ */
+export interface ScannerPermissionStatus {
+  camera: "granted" | "prompt" | "denied";
+}
+
 /** The Scanner plugin. */
 export const Scanner = {
   ...definePlugin<{
@@ -71,7 +79,11 @@ export const Scanner = {
     scan: (options?: ScanOptions) => Promise<ScanResult>;
     /** Closes the scanner. */
     stop: (options?: StopOptions) => Promise<StopResult>;
-  }>("scanner", { scan: true, stop: true }),
+    /** Where camera access stands, without asking. */
+    checkPermissions: () => Promise<ScannerPermissionStatus>;
+    /** Asks for camera access if it can still be asked for, and reports where it stands afterwards. */
+    requestPermissions: () => Promise<ScannerPermissionStatus>;
+  }>("scanner", { scan: true, stop: true, checkPermissions: true, requestPermissions: true }),
 
   /**
    * Calls `callback` for each code found.

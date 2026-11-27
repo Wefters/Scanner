@@ -41,7 +41,6 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
@@ -128,22 +127,20 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
             return
         }
 
-        val askedBefore = PermissionPrefs.hasAskedBefore(activity)
-        val canShowRationale =
-                ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.CAMERA)
-
-        if (askedBefore && !canShowRationale) {
-            reject(
-                    callback,
-                    "PERMISSION_DENIED",
-                    "Camera access is denied. Enable it in Settings to use the scanner."
-            )
-            return
+        when (checkPermissions(listOf(Manifest.permission.CAMERA))[Manifest.permission.CAMERA]) {
+            PermissionState.DENIED -> {
+                reject(
+                        callback,
+                        "PERMISSION_DENIED",
+                        "Camera access is denied. Enable it in Settings to use the scanner."
+                )
+                return
+            }
+            else -> Unit
         }
 
-        PermissionPrefs.markAsked(activity)
-        requestPermission(activity, Manifest.permission.CAMERA) { granted ->
-            if (granted) {
+        requestPermissions(listOf(Manifest.permission.CAMERA)) { states ->
+            if (states[Manifest.permission.CAMERA] == PermissionState.GRANTED) {
                 startScan(
                         prompt,
                         continuous,
@@ -161,6 +158,21 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
             } else {
                 reject(callback, "PERMISSION_DENIED", "Camera permission was denied")
             }
+        }
+    }
+
+    /** Where camera access stands: `{ camera: "granted" | "prompt" | "denied" }`. */
+    @WefterMethod
+    fun checkPermissions(payload: JSONObject, callback: (Result<Any>) -> Unit) {
+        val state = checkPermissions(listOf(Manifest.permission.CAMERA))[Manifest.permission.CAMERA]
+        resolve(callback, JSONObject().put("camera", state.toString()))
+    }
+
+    /** Asks for camera access if it can still be asked for, and reports where it stands afterwards. */
+    @WefterMethod
+    fun requestPermissions(payload: JSONObject, callback: (Result<Any>) -> Unit) {
+        requestPermissions(listOf(Manifest.permission.CAMERA)) { states ->
+            resolve(callback, JSONObject().put("camera", states[Manifest.permission.CAMERA].toString()))
         }
     }
 
@@ -271,25 +283,6 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
         val rest = formats.drop(1).toIntArray()
 
         return BarcodeScannerOptions.Builder().setBarcodeFormats(first, *rest).build()
-    }
-
-    /**
-     * Remembers whether camera permission was asked before, to tell "denied once" from "denied permanently".
-     */
-    private object PermissionPrefs {
-        private const val PREFS_NAME = "wefter_scanner_permission_prefs"
-        private const val KEY_ASKED = "camera_permission_asked"
-
-        fun hasAskedBefore(context: Context): Boolean =
-                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                        .getBoolean(KEY_ASKED, false)
-
-        fun markAsked(context: Context) {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .putBoolean(KEY_ASKED, true)
-                    .apply()
-        }
     }
 
     /** A headless fragment that launches the system photo picker and returns the picked image. */
@@ -674,7 +667,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
 
             val titleLabel =
                     TextView(activity).apply {
-                        text = "Scan Code"
+                        text = WefterText.get(activity, "scanner.title")
                         setTextColor(Color.WHITE)
                         textSize = 17f
                         setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -758,7 +751,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
                     if (!allowGallery) null
                     else
                             TextView(activity).apply {
-                                text = "Choose from Gallery"
+                                text = WefterText.get(activity, "scanner.gallery")
                                 setTextColor(Color.WHITE)
                                 textSize = 14f
                                 setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -1125,7 +1118,7 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
                         InputImage.fromFilePath(activity, uri)
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to load picked image", e)
-                        showGalleryToast("Couldn't read that image.")
+                        showGalleryToast(WefterText.get(activity, "scanner.imageUnreadable"))
                         return
                     }
 
@@ -1142,12 +1135,12 @@ class ScannerPlugin(context: Context, dispatcher: BridgeDispatcher) : WefterPlug
                                     format = REVERSE_FORMAT_MAP[barcode.format] ?: "unknown"
                             )
                         } else {
-                            showGalleryToast("No code found in that image.")
+                            showGalleryToast(WefterText.get(activity, "scanner.noCodeInImage"))
                         }
                     }
                     .addOnFailureListener {
                         Log.e(TAG, "Gallery barcode scan failed", it)
-                        showGalleryToast("No code found in that image.")
+                        showGalleryToast(WefterText.get(activity, "scanner.noCodeInImage"))
                     }
         }
 

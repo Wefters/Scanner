@@ -1,0 +1,8 @@
+{
+  "scanner.cameraUnavailable.message": "你仍然可以从相册中的照片扫描代码。",
+  "scanner.cameraUnavailable.title": "相机不可用",
+  "scanner.gallery": "从相册选择",
+  "scanner.imageUnreadable": "无法读取该图片。",
+  "scanner.noCodeInImage": "该图片中没有找到代码。",
+  "scanner.title": "扫描代码"
+}

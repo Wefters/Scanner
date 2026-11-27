@@ -67,6 +67,16 @@ await Scanner.scan({
 });
 ```
 
+### Permissions
+
+```ts
+const { camera } = await Scanner.checkPermissions(); // "granted" | "prompt" | "denied"
+if (camera === "prompt") await Scanner.requestPermissions();
+if (camera === "denied") await openAppSettings(); // from @wefterjs/core
+```
+
+`scan()` asks for camera access itself when it can.
+
 ### Stop scanning
 
 Closes the camera preview overlay programmatically:
@@ -94,6 +104,10 @@ Supported values in the `formats` array:
 - `"upca"`: UPC-A Universal Product Code
 - `"upce"`: UPC-E Universal Product Code
 - `"all"`: Match all supported formats
+
+## Text
+
+The scanner's own text is translated with the app's languages (`localization` in `wefter.config.json`). Its keys, for `localization.messages`: `scanner.title`, `scanner.gallery`, `scanner.imageUnreadable`, `scanner.noCodeInImage`, `scanner.cameraUnavailable.title`, `scanner.cameraUnavailable.message`.
 
 ## Platform events
 

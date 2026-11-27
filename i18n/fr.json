@@ -1,0 +1,8 @@
+{
+  "scanner.cameraUnavailable.message": "Vous pouvez quand même scanner un code depuis une photo de votre galerie.",
+  "scanner.cameraUnavailable.title": "Appareil photo indisponible",
+  "scanner.gallery": "Choisir dans la galerie",
+  "scanner.imageUnreadable": "Impossible de lire cette image.",
+  "scanner.noCodeInImage": "Aucun code trouvé dans cette image.",
+  "scanner.title": "Scanner un code"
+}

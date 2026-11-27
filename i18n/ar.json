@@ -1,0 +1,8 @@
+{
+  "scanner.cameraUnavailable.message": "لا يزال بإمكانك مسح رمز من صورة في معرض الصور.",
+  "scanner.cameraUnavailable.title": "الكاميرا غير متاحة",
+  "scanner.gallery": "الاختيار من المعرض",
+  "scanner.imageUnreadable": "تعذّرت قراءة تلك الصورة.",
+  "scanner.noCodeInImage": "لم يُعثر على رمز في تلك الصورة.",
+  "scanner.title": "مسح رمز"
+}

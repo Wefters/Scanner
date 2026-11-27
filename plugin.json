@@ -17,7 +17,7 @@
       "proguardRules": "-keep class com.google.mlkit.vision.barcode.** { *; }\n-keep class com.google.mlkit.vision.common.** { *; }"
     }
   },
-  "methods": ["scan", "stop"],
+  "methods": ["scan", "stop", "checkPermissions", "requestPermissions"],
   "hooks": [],
   "events": ["scanner:codeScanned", "scanner:cancelled"]
 }
