@@ -92,6 +92,24 @@ final class ScannerPlugin: WefterPlugin {
         }
     }
 
+    /// Where camera access stands: `{ camera: "granted" | "prompt" | "denied" }`.
+    // @WefterMethod
+    func checkPermissions(payload: [String: Any], callback: @escaping (Result<Any, Error>) -> Void) throws {
+        resolve(callback, data: ["camera": PermissionState(AVCaptureDevice.authorizationStatus(for: .video)).rawValue])
+    }
+
+    /// Asks for camera access if it can still be asked for, and reports where it stands afterwards.
+    // @WefterMethod
+    func requestPermissions(payload: [String: Any], callback: @escaping (Result<Any, Error>) -> Void) throws {
+        guard AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined else {
+            try checkPermissions(payload: payload, callback: callback)
+            return
+        }
+        AVCaptureDevice.requestAccess(for: .video) { [weak self] _ in
+            self?.resolve(callback, data: ["camera": PermissionState(AVCaptureDevice.authorizationStatus(for: .video)).rawValue])
+        }
+    }
+
     /// Closes the scanner with the given `id`, or whichever is open without one.
     // @WefterMethod
     func stop(payload: [String: Any], callback: @escaping (Result<Any, Error>) -> Void) throws {
@@ -711,13 +729,13 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 34, weight: .regular)
 
         let title = UILabel()
-        title.text = "Camera unavailable"
+        title.text = WefterText.get("scanner.cameraUnavailable.title")
         title.textColor = .white
         title.font = .systemFont(ofSize: 17, weight: .semibold)
         title.textAlignment = .center
 
         let message = UILabel()
-        message.text = "You can still scan a code from a photo in your gallery."
+        message.text = WefterText.get("scanner.cameraUnavailable.message")
         message.textColor = UIColor.white.withAlphaComponent(0.7)
         message.font = .systemFont(ofSize: 14)
         message.textAlignment = .center
@@ -823,7 +841,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         }
 
         let titleLabel = UILabel()
-        titleLabel.text = "Scan Code"
+        titleLabel.text = WefterText.get("scanner.title")
         titleLabel.textColor = .white
         titleLabel.textAlignment = .center
         titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
@@ -847,7 +865,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         ])
 
         if allowGallery {
-            galleryButton.setTitle("Choose from Gallery", for: .normal)
+            galleryButton.setTitle(WefterText.get("scanner.gallery"), for: .normal)
             galleryButton.setTitleColor(.white, for: .normal)
             galleryButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
             galleryButton.backgroundColor = UIColor.white.withAlphaComponent(0.14)
@@ -1101,7 +1119,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
             guard let self = self else { return }
             guard let image = object as? UIImage, let cgImage = image.cgImage else {
                 DispatchQueue.main.async {
-                    self.showGalleryAlert(message: "Couldn't read that image.")
+                    self.showGalleryAlert(message: WefterText.get("scanner.imageUnreadable"))
                 }
                 return
             }
@@ -1134,7 +1152,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
 
         guard let (value, symbology) = match else {
             DispatchQueue.main.async { [weak self] in
-                self?.showGalleryAlert(message: visionFailed ? "Couldn't read that image." : "No code found in that image.")
+                self?.showGalleryAlert(message: WefterText.get(visionFailed ? "scanner.imageUnreadable" : "scanner.noCodeInImage"))
             }
             return
         }
@@ -1158,7 +1176,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
     private func showGalleryAlert(message: String) {
         guard !finished else { return }
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        alert.addAction(UIAlertAction(title: WefterText.get("dialog.ok"), style: .default))
         present(alert, animated: true)
     }
 

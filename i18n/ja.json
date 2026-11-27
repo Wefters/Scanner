@@ -1,0 +1,8 @@
+{
+  "scanner.cameraUnavailable.message": "ギャラリーの写真からコードを読み取ることはできます。",
+  "scanner.cameraUnavailable.title": "カメラを使用できません",
+  "scanner.gallery": "ギャラリーから選ぶ",
+  "scanner.imageUnreadable": "その画像を読み取れませんでした。",
+  "scanner.noCodeInImage": "その画像にコードが見つかりませんでした。",
+  "scanner.title": "コードをスキャン"
+}
